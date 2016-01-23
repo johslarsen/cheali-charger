@@ -25,6 +25,8 @@
 #include "atomic.h"
 #include "Balancer.h"
 
+#define ANALOG_INPUTS_E_OUT_dt_FACTOR   50
+#define ANALOG_INPUTS_E_OUT_DIVIDER     100
 
 #define ANALOG_INPUTS_ADC_MEASUREMENTS_COUNT (ANALOG_INPUTS_ADC_ROUND_MAX_COUNT*ANALOG_INPUTS_ADC_BURST_COUNT)
 
@@ -72,6 +74,8 @@ namespace AnalogInputs {
     bool        enable_deltaVoutMax_;
 
     uint32_t    i_charge_;
+    uint32_t    i_Eout_;
+    uint8_t     i_Eout_dt_;
 
     void _resetAvr();
     void _resetDeltaAvr();
@@ -243,6 +247,8 @@ void AnalogInputs::resetAccumulatedMeasurements()
 {
     ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
         i_charge_ = 0;
+        i_Eout_ = 0;
+        i_Eout_dt_ = ANALOG_INPUTS_E_OUT_dt_FACTOR;
     }
     resetMeasurement();
     resetDelta();
@@ -360,17 +366,37 @@ void AnalogInputs::printRealValue(Name name, uint8_t dig)
     lcdPrintAnalog(x, dig, t);
 }
 
-uint16_t AnalogInputs::getCharge()
+AnalogInputs::ValueType AnalogInputs::getCharge()
 {
     uint32_t retu;
     ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
         retu = i_charge_;
     }
+
 #if TIMER_INTERRUPT_PERIOD_MICROSECONDS == 500
-    retu /= 1000000/TIMER_INTERRUPT_PERIOD_MICROSECONDS/16;
-    retu /= 3600/TIMER_SLOW_INTERRUPT_INTERVAL*16;
+    retu /= 1000000/TIMER_INTERRUPT_PERIOD_MICROSECONDS/16; // == 125
+    retu /= 3600/TIMER_SLOW_INTERRUPT_INTERVAL*16;          // == 256
 #else
 #warning "TIMER_INTERRUPT_PERIOD_MICROSECONDS != 500"
+    retu /= 1000000/TIMER_INTERRUPT_PERIOD_MICROSECONDS;
+    retu /= 3600/TIMER_SLOW_INTERRUPT_INTERVAL;
+#endif
+    return retu;
+}
+
+
+AnalogInputs::ValueType AnalogInputs::getEout()
+{
+    uint32_t retu;
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+        retu = i_Eout_;
+    }
+#if TIMER_INTERRUPT_PERIOD_MICROSECONDS == 500
+    retu /=  1000000/TIMER_INTERRUPT_PERIOD_MICROSECONDS/16 * 2;   // == 250
+    retu /=  3600/TIMER_SLOW_INTERRUPT_INTERVAL*16;                // == 256
+#else
+#warning "TIMER_INTERRUPT_PERIOD_MICROSECONDS != 500"
+    retu /= 2; // == ANALOG_AMP(1.0)*ANALOG_VOLT(1.0)/ANALOG_INPUTS_E_OUT_DIVIDER*ANALOG_INPUTS_E_OUT_dt_FACTOR/ANALOG_WATTH(1.0)
     retu /= 1000000/TIMER_INTERRUPT_PERIOD_MICROSECONDS;
     retu /= 3600/TIMER_SLOW_INTERRUPT_INTERVAL;
 #endif
@@ -380,6 +406,20 @@ uint16_t AnalogInputs::getCharge()
 void AnalogInputs::doSlowInterrupt()
 {
     i_charge_ += getIout();
+    //check units
+    STATIC_ASSERT(ANALOG_AMP(1.0) == ANALOG_CHARGE(1.0));
+
+    if(--i_Eout_dt_ == 0) {
+        i_Eout_dt_ = ANALOG_INPUTS_E_OUT_dt_FACTOR;
+        uint32_t E = getIout();
+        E *= getVout();
+        E /= ANALOG_INPUTS_E_OUT_DIVIDER;
+        i_Eout_ += E;
+        //check units
+        STATIC_ASSERT(uint32_t(ANALOG_AMP(1.0))*ANALOG_VOLT(1.0)
+                / (ANALOG_INPUTS_E_OUT_DIVIDER*ANALOG_INPUTS_E_OUT_dt_FACTOR)
+                == 2 * ANALOG_WATTH(1.0));
+    }
 }
 
 // finalize Measurement
@@ -540,26 +580,20 @@ void AnalogInputs::finalizeFullVirtualMeasurement()
     setReal(VobInfo, obInfo);
 
     AnalogInputs::ValueType IoutValue = 0;
-    AnalogInputs::ValueType CoutValue = getCharge();
     if(Discharger::isPowerOn()) {
         IoutValue = getRealValue(Idischarge);
     } else if (SMPS::isPowerOn()) {
         IoutValue = getRealValue(Ismps);
     }
 
-    setReal(Iout, IoutValue);
-    setReal(Cout, CoutValue);
-
     uint32_t P = IoutValue;
     P *= out;
     P /= 10000;
     setReal(Pout, P);
 
-    //TODO: rewrite
-    uint32_t E = CoutValue;
-    E *= out;
-    E /= 10000;
-    setReal(Eout, E);
+    setReal(Iout, IoutValue);
+    setReal(Cout, getCharge());
+    setReal(Eout, getEout());
 }
 
 void AnalogInputs::setReal(Name name, ValueType real)
