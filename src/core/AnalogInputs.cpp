@@ -413,10 +413,10 @@ void AnalogInputs::doSlowInterrupt()
 
     if(--i_Eout_dt_ == 0) {
         i_Eout_dt_ = ANALOG_INPUTS_E_OUT_dt_FACTOR;
-        uint32_t E = getIout();
-        E *= getVout();
-        E /= ANALOG_INPUTS_E_OUT_DIVIDER;
-        i_Eout_ += E;
+
+        uint32_t P = getIout() * getVout();
+        uint32_t E_since_previous_measurement = P / ANALOG_INPUTS_E_OUT_DIVIDER;
+        i_Eout_ += E_since_previous_measurement;
     }
 }
 
