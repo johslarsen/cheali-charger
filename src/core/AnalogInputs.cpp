@@ -366,22 +366,23 @@ void AnalogInputs::printRealValue(Name name, uint8_t dig)
     lcdPrintAnalog(x, dig, t);
 }
 
+static inline uint32_t toHoursBasis(uint32_t accumulator) {
+    uint32_t retu = accumulator;
+    retu /= 1000000/TIMER_INTERRUPT_PERIOD_MICROSECONDS
+        * 3600/TIMER_SLOW_INTERRUPT_INTERVAL;
+    return retu;
+}
+
 AnalogInputs::ValueType AnalogInputs::getCharge()
 {
+    //check units
+    STATIC_ASSERT(ANALOG_AMP(1.0) == ANALOG_CHARGE(1.0));
+
     uint32_t retu;
     ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
         retu = i_charge_;
     }
-
-#if TIMER_INTERRUPT_PERIOD_MICROSECONDS == 500
-    retu /= 1000000/TIMER_INTERRUPT_PERIOD_MICROSECONDS/16; // == 125
-    retu /= 3600/TIMER_SLOW_INTERRUPT_INTERVAL*16;          // == 256
-#else
-#warning "TIMER_INTERRUPT_PERIOD_MICROSECONDS != 500"
-    retu /= 1000000/TIMER_INTERRUPT_PERIOD_MICROSECONDS;
-    retu /= 3600/TIMER_SLOW_INTERRUPT_INTERVAL;
-#endif
-    return retu;
+    return toHoursBasis(retu);
 }
 
 
@@ -391,34 +392,27 @@ AnalogInputs::ValueType AnalogInputs::getEout()
     ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
         retu = i_Eout_;
     }
-#if TIMER_INTERRUPT_PERIOD_MICROSECONDS == 500
-    retu /=  1000000/TIMER_INTERRUPT_PERIOD_MICROSECONDS/16 * 2;   // == 250
-    retu /=  3600/TIMER_SLOW_INTERRUPT_INTERVAL*16;                // == 256
-#else
-#warning "TIMER_INTERRUPT_PERIOD_MICROSECONDS != 500"
-    retu /= 2; // == ANALOG_AMP(1.0)*ANALOG_VOLT(1.0)/ANALOG_INPUTS_E_OUT_DIVIDER*ANALOG_INPUTS_E_OUT_dt_FACTOR/ANALOG_WATTH(1.0)
-    retu /= 1000000/TIMER_INTERRUPT_PERIOD_MICROSECONDS;
-    retu /= 3600/TIMER_SLOW_INTERRUPT_INTERVAL;
-#endif
-    return retu;
+
+    //check units
+    STATIC_ASSERT(uint32_t(ANALOG_AMP(1.0))*ANALOG_VOLT(1.0)
+            / (ANALOG_INPUTS_E_OUT_DIVIDER*ANALOG_INPUTS_E_OUT_dt_FACTOR)
+            == 2 * ANALOG_WATTH(1.0));
+    retu /= 2;
+
+    return toHoursBasis(retu);
 }
 
 void AnalogInputs::doSlowInterrupt()
 {
     i_charge_ += getIout();
-    //check units
-    STATIC_ASSERT(ANALOG_AMP(1.0) == ANALOG_CHARGE(1.0));
 
     if(--i_Eout_dt_ == 0) {
         i_Eout_dt_ = ANALOG_INPUTS_E_OUT_dt_FACTOR;
-        uint32_t E = getIout();
-        E *= getVout();
-        E /= ANALOG_INPUTS_E_OUT_DIVIDER;
-        i_Eout_ += E;
-        //check units
-        STATIC_ASSERT(uint32_t(ANALOG_AMP(1.0))*ANALOG_VOLT(1.0)
-                / (ANALOG_INPUTS_E_OUT_DIVIDER*ANALOG_INPUTS_E_OUT_dt_FACTOR)
-                == 2 * ANALOG_WATTH(1.0));
+
+        uint32_t P = getIout();
+        P *= getVout();
+        uint32_t E_since_previous_measurement = P / ANALOG_INPUTS_E_OUT_DIVIDER;
+        i_Eout_ += E_since_previous_measurement;
     }
 }
 
