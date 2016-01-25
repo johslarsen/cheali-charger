@@ -395,7 +395,13 @@ AnalogInputs::ValueType AnalogInputs::getEout()
     ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
         retu = i_Eout_;
     }
-    retu /= 2; // == ANALOG_AMP(1.0)*ANALOG_VOLT(1.0)/ANALOG_INPUTS_E_OUT_DIVIDER*ANALOG_INPUTS_E_OUT_dt_FACTOR/ANALOG_WATTH(1.0)
+
+    //check units
+    STATIC_ASSERT(uint32_t(ANALOG_AMP(1.0))*ANALOG_VOLT(1.0)
+            / (ANALOG_INPUTS_E_OUT_DIVIDER*ANALOG_INPUTS_E_OUT_dt_FACTOR)
+            == 2 * ANALOG_WATTH(1.0));
+    retu /= 2;
+
     return to_seconds_basis(retu);
 }
 
@@ -411,10 +417,6 @@ void AnalogInputs::doSlowInterrupt()
         E *= getVout();
         E /= ANALOG_INPUTS_E_OUT_DIVIDER;
         i_Eout_ += E;
-        //check units
-        STATIC_ASSERT(uint32_t(ANALOG_AMP(1.0))*ANALOG_VOLT(1.0)
-                / (ANALOG_INPUTS_E_OUT_DIVIDER*ANALOG_INPUTS_E_OUT_dt_FACTOR)
-                == 2 * ANALOG_WATTH(1.0));
     }
 }
 
