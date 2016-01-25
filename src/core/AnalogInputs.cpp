@@ -366,13 +366,8 @@ void AnalogInputs::printRealValue(Name name, uint8_t dig)
     lcdPrintAnalog(x, dig, t);
 }
 
-AnalogInputs::ValueType AnalogInputs::getCharge()
-{
-    uint32_t retu;
-    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-        retu = i_charge_;
-    }
-
+static inline uint32_t to_seconds_basis(uint32_t accumulator) {
+    uint32_t retu = accumulator;
 #if TIMER_INTERRUPT_PERIOD_MICROSECONDS == 500
     retu /= 1000000/TIMER_INTERRUPT_PERIOD_MICROSECONDS/16; // == 125
     retu /= 3600/TIMER_SLOW_INTERRUPT_INTERVAL*16;          // == 256
@@ -384,6 +379,15 @@ AnalogInputs::ValueType AnalogInputs::getCharge()
     return retu;
 }
 
+AnalogInputs::ValueType AnalogInputs::getCharge()
+{
+    uint32_t retu;
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+        retu = i_charge_;
+    }
+    return to_seconds_basis(retu);
+}
+
 
 AnalogInputs::ValueType AnalogInputs::getEout()
 {
@@ -391,16 +395,8 @@ AnalogInputs::ValueType AnalogInputs::getEout()
     ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
         retu = i_Eout_;
     }
-#if TIMER_INTERRUPT_PERIOD_MICROSECONDS == 500
-    retu /=  1000000/TIMER_INTERRUPT_PERIOD_MICROSECONDS/16 * 2;   // == 250
-    retu /=  3600/TIMER_SLOW_INTERRUPT_INTERVAL*16;                // == 256
-#else
-#warning "TIMER_INTERRUPT_PERIOD_MICROSECONDS != 500"
     retu /= 2; // == ANALOG_AMP(1.0)*ANALOG_VOLT(1.0)/ANALOG_INPUTS_E_OUT_DIVIDER*ANALOG_INPUTS_E_OUT_dt_FACTOR/ANALOG_WATTH(1.0)
-    retu /= 1000000/TIMER_INTERRUPT_PERIOD_MICROSECONDS;
-    retu /= 3600/TIMER_SLOW_INTERRUPT_INTERVAL;
-#endif
-    return retu;
+    return to_seconds_basis(retu);
 }
 
 void AnalogInputs::doSlowInterrupt()
